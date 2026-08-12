@@ -1,4 +1,4 @@
-name: Boom Music - Build IPA
+name: Boom Music - Auto Build IPA
 
 on:
   workflow_dispatch:
@@ -15,68 +15,55 @@ jobs:
 
     steps:
 
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ==========================================
-      # CHECK BOOM MUSIC PROJECT
-      # ==========================================
-      - name: Check Boom Music files
-        shell: bash
-        run: |
-          set -e
-
-          echo "===== ROOT PROJECT ====="
-          ls -la
-
-          if [ ! -f "index.html" ]; then
-            echo "ERROR: index.html tidak ditemukan."
-            echo ""
-            echo "Struktur yang benar:"
-            echo ""
-            echo "Musik-ibaal/"
-            echo "├── index.html"
-            echo "├── style.css"
-            echo "├── app.js"
-            echo "├── manifest.json"
-            echo "├── service-worker.js"
-            echo "├── js/"
-            echo "├── assets/"
-            echo "└── .github/"
-            echo ""
-            exit 1
-          fi
-
-          echo "OK: index.html ditemukan."
-
-      # ==========================================
-      # NODE
-      # ==========================================
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # ==========================================
-      # CREATE PACKAGE
-      # ==========================================
-      - name: Create package.json
+      - name: Show repository
+        run: |
+          echo "===== REPOSITORY ====="
+          find . -maxdepth 3 -type f | sort
+
+      - name: Prepare Boom Music
         shell: bash
+        run: |
+          set -e
+
+          mkdir -p www
+
+          if [ -f index.html ]; then
+            cp index.html www/
+          else
+            echo "index.html belum ada."
+            echo "Workflow tidak akan membuat project palsu."
+            echo ""
+            echo "Masukkan project Boom Music ke root repository."
+            exit 1
+          fi
+
+          [ -f style.css ] && cp style.css www/ || true
+          [ -f app.js ] && cp app.js www/ || true
+          [ -f manifest.json ] && cp manifest.json www/ || true
+          [ -f service-worker.js ] && cp service-worker.js www/ || true
+
+          [ -d js ] && cp -R js www/ || true
+          [ -d assets ] && cp -R assets www/ || true
+
+      - name: Create package.json
         run: |
           if [ ! -f package.json ]; then
             npm init -y
           fi
 
+      - name: Install Capacitor
+        run: |
           npm install @capacitor/core @capacitor/cli @capacitor/ios
 
-      # ==========================================
-      # CAPACITOR CONFIG
-      # ==========================================
       - name: Create Capacitor config
-        shell: bash
         run: |
           cat > capacitor.config.json <<'EOF'
           {
@@ -87,104 +74,39 @@ jobs:
           }
           EOF
 
-      # ==========================================
-      # COPY WEB PROJECT
-      # ==========================================
-      - name: Prepare web files
-        shell: bash
-        run: |
-          rm -rf www
-          mkdir -p www
-
-          cp -R index.html www/
-
-          [ -f style.css ] && cp style.css www/ || true
-          [ -f app.js ] && cp app.js www/ || true
-          [ -f manifest.json ] && cp manifest.json www/ || true
-          [ -f service-worker.js ] && cp service-worker.js www/ || true
-
-          [ -d js ] && cp -R js www/ || true
-          [ -d assets ] && cp -R assets www/ || true
-          [ -d data ] && cp -R data www/ || true
-          [ -d images ] && cp -R images www/ || true
-          [ -d icons ] && cp -R icons www/ || true
-          [ -d fonts ] && cp -R fonts www/ || true
-
-          echo "===== WWW ====="
-          find www -maxdepth 3 -type f | sort
-
-      # ==========================================
-      # ADD IOS
-      # ==========================================
-      - name: Create iOS project
-        shell: bash
+      - name: Add iOS
         run: |
           npx cap add ios
 
-      # ==========================================
-      # SYNC
-      # ==========================================
-      - name: Sync Capacitor
-        shell: bash
+      - name: Sync iOS
         run: |
           npx cap sync ios
 
-      # ==========================================
-      # PATCH IOS SETTINGS
-      # ==========================================
-      - name: Configure iOS
-        shell: bash
-        run: |
-          PROJECT="ios/App/App.xcodeproj/project.pbxproj"
-
-          if [ -f "$PROJECT" ]; then
-
-            sed -i '' \
-              's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g' \
-              "$PROJECT"
-
-            sed -i '' \
-              's/ALWAYS_SEARCH_USER_PATHS = YES;/ALWAYS_SEARCH_USER_PATHS = NO;/g' \
-              "$PROJECT"
-
-          fi
-
-      # ==========================================
-      # PODS
-      # ==========================================
-      - name: Install CocoaPods
-        shell: bash
+      - name: Install Pods
         run: |
           cd ios/App
-
           pod install --repo-update
 
-      # ==========================================
-      # BUILD
-      # ==========================================
-      - name: Build unsigned archive
+      - name: Build unsigned IPA
         shell: bash
         run: |
           set -o pipefail
 
-          mkdir -p output
+          mkdir -p ios/App/output
 
           xcodebuild \
             -workspace ios/App/App.xcworkspace \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "$PWD/output/BoomMusic.xcarchive" \
+            -archivePath "$PWD/ios/App/output/BoomMusic.xcarchive" \
             IPHONEOS_DEPLOYMENT_TARGET=15.5 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             archive
 
-      # ==========================================
-      # CREATE UNSIGNED IPA
-      # ==========================================
-      - name: Create unsigned IPA
+      - name: Package IPA
         shell: bash
         run: |
           set -e
@@ -192,37 +114,20 @@ jobs:
           cd ios/App
 
           rm -rf Payload
-          mkdir -p Payload
+          mkdir Payload
 
           cp -R \
             output/BoomMusic.xcarchive/Products/Applications/App.app \
             Payload/BoomMusic.app
 
-          /usr/bin/zip -r \
+          zip -r \
             "$GITHUB_WORKSPACE/BoomMusic-unsigned.ipa" \
             Payload
 
           rm -rf Payload
 
-          echo "===== IPA CREATED ====="
-          ls -lh "$GITHUB_WORKSPACE/BoomMusic-unsigned.ipa"
-
-      # ==========================================
-      # UPLOAD IPA
-      # ==========================================
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: BoomMusic-IPA
           path: BoomMusic-unsigned.ipa
-          if-no-files-found: error
-
-      # ==========================================
-      # UPLOAD ARCHIVE
-      # ==========================================
-      - name: Upload Xcode Archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: BoomMusic-XCArchive
-          path: ios/App/output/BoomMusic.xcarchive
-          if-no-files-found: error
