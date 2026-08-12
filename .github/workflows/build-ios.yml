@@ -1,214 +1,151 @@
-name: Boom Music iOS Build
+name: Build Boom Music iOS
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-      - master
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build-ios:
-    name: Build Boom Music iOS
-    runs-on: macos-15
+    runs-on: macos-14
 
     steps:
-
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ==========================================
-      # XCODE
-      # ==========================================
-      - name: Select Xcode 16.4
-        run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
-          xcodebuild -version
-          xcode-select -p
-
-
-      # ==========================================
-      # NODE
-      # ==========================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
+      - name: Check project
+        run: |
+          echo "===== PROJECT ====="
+          pwd
+          ls -la
+          echo "==================="
 
-      # ==========================================
-      # INSTALL WEB DEPENDENCIES
-      # ==========================================
       - name: Install npm dependencies
         run: |
-          npm ci
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
-
-      # ==========================================
-      # CAPACITOR CHECK
-      # ==========================================
-      - name: Check Capacitor
+      - name: Install Capacitor CLI
         run: |
-          npx cap --version
-          npm list @capacitor/core
-          npm list @capacitor/ios
+          if [ -f package.json ]; then
+            npm install @capacitor/cli @capacitor/core @capacitor/ios
+          fi
 
+      - name: Build web project
+        run: |
+          if npm run | grep -q "build"; then
+            npm run build
+          else
+            echo "No web build script found - using existing web files"
+          fi
 
-      # ==========================================
-      # SYNC CAPACITOR
-      # ==========================================
       - name: Sync Capacitor iOS
         run: |
           npx cap sync ios
 
-
-      # ==========================================
-      # CHECK IOS PROJECT
-      # ==========================================
-      - name: Check iOS project
-        run: |
-          echo "===== IOS DIRECTORY ====="
-          ls -la
-
-          echo "===== BUILD-IOS ====="
-          ls -la build-ios || true
-
-          echo "===== IOS PROJECT ====="
-          find build-ios -maxdepth 4 \
-            \( -name "*.xcodeproj" -o -name "Podfile" -o -name "Pods" \) \
-            -print || true
-
-
-      # ==========================================
-      # INSTALL COCOAPODS
-      # ==========================================
       - name: Install CocoaPods
         run: |
-          sudo gem install cocoapods
-          pod --version
-
-
-      # ==========================================
-      # POD INSTALL
-      # ==========================================
-      - name: Install iOS Pods
-        working-directory: build-ios/ios/App
-        run: |
-          pod deintegrate || true
+          cd ios/App
           pod install --repo-update
 
-
-      # ==========================================
-      # VERIFY CAPACITOR POD
-      # ==========================================
-      - name: Verify Capacitor
-        working-directory: build-ios/ios/App
+      - name: Show iOS structure
         run: |
-          echo "===== PODS ====="
-          ls -la Pods || true
+          echo "===== iOS ====="
+          find ios -maxdepth 4 -type f | sort | head -300
+          echo "==============="
 
-          echo "===== CAPACITOR ====="
-          find Pods -maxdepth 3 \
-            \( -iname "*Capacitor*" -o -iname "Capacitor.framework" \) \
-            -print || true
-
-          echo "===== PODFILE ====="
-          cat Podfile
-
-
-      # ==========================================
-      # CLEAN
-      # ==========================================
-      - name: Clean Xcode
-        working-directory: build-ios/ios/App
+      - name: Find workspace
+        id: workspace
         run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -type d | head -1)
+
+          if [ -z "$WORKSPACE" ]; then
+            echo "ERROR: No .xcworkspace found"
+            exit 1
+          fi
+
+          echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
+          echo "Workspace: $WORKSPACE"
+
+      - name: Find scheme
+        id: scheme
+        run: |
+          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+
           xcodebuild \
-            -workspace App.xcodeproj/project.xcworkspace \
+            -workspace "$WORKSPACE" \
+            -list
+
+      - name: Clean
+        run: |
+          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+
+          xcodebuild \
+            -workspace "$WORKSPACE" \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
             clean
 
-
-      # ==========================================
-      # ARCHIVE
-      # ==========================================
-      - name: Archive Boom Music
-        working-directory: build-ios/ios/App
+      - name: Archive
         run: |
-          mkdir -p ../../output
+          WORKSPACE="${{ steps.workspace.outputs.workspace }}"
+
+          mkdir -p output
 
           xcodebuild \
-            -workspace App.xcodeproj/project.xcworkspace \
+            -workspace "$WORKSPACE" \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "$GITHUB_WORKSPACE/build-ios/output/BoomMusic.xcarchive" \
+            -archivePath "$PWD/output/BoomMusic.xcarchive" \
             IPHONEOS_DEPLOYMENT_TARGET=15.5 \
-            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOLS=NO \
-            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             archive
 
-
-      # ==========================================
-      # CREATE UNSIGNED IPA
-      # ==========================================
       - name: Create unsigned IPA
         run: |
           set -e
 
-          APP_PATH="build-ios/output/BoomMusic.xcarchive/Products/Applications/App.app"
-          PAYLOAD="build-ios/output/Payload"
-
-          rm -rf "$PAYLOAD"
-          mkdir -p "$PAYLOAD"
+          ARCHIVE="output/BoomMusic.xcarchive"
+          APP_PATH="$ARCHIVE/Products/Applications/App.app"
 
           if [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: App.app tidak ditemukan!"
+            echo "ERROR: App.app not found"
+            find "$ARCHIVE" -maxdepth 5 -type d
             exit 1
           fi
 
-          cp -R "$APP_PATH" "$PAYLOAD/App.app"
+          mkdir -p output/Payload
 
-          cd build-ios/output
+          cp -R "$APP_PATH" output/Payload/BoomMusic.app
 
-          zip -qry BoomMusic-unsigned.ipa Payload
+          cd output
+          zip -r BoomMusic-unsigned.ipa Payload
 
-          rm -rf Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoomMusic-iOS
+          path: output/BoomMusic-unsigned.ipa
+          if-no-files-found: error
 
-          echo "===== IPA CREATED ====="
-          ls -lh BoomMusic-unsigned.ipa
-
-
-      # ==========================================
-      # UPLOAD ARCHIVE
-      # ==========================================
-      - name: Upload Xcode Archive
-        if: success()
+      - name: Upload Archive
         uses: actions/upload-artifact@v4
         with:
           name: BoomMusic-XCArchive
-          path: build-ios/output/BoomMusic.xcarchive
-          retention-days: 7
-
-
-      # ==========================================
-      # UPLOAD IPA
-      # ==========================================
-      - name: Upload IPA
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: BoomMusic-IPA
-          path: build-ios/output/BoomMusic-unsigned.ipa
-          retention-days: 7
+          path: output/BoomMusic.xcarchive
+          if-no-files-found: error
