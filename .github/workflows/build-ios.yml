@@ -1,9 +1,10 @@
-name: Build Boom Music iOS
+name: Boom Music iOS Build
 
 on:
   push:
     branches:
       - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -12,80 +13,202 @@ permissions:
 jobs:
   build-ios:
     name: Build Boom Music iOS
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
-      - name: Checkout
+
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+
+      # ==========================================
+      # XCODE
+      # ==========================================
+      - name: Select Xcode 16.4
         run: |
-          echo "Xcode:"
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcodebuild -version
           xcode-select -p
 
-      - name: Inspect Project
+
+      # ==========================================
+      # NODE
+      # ==========================================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+
+      # ==========================================
+      # INSTALL WEB DEPENDENCIES
+      # ==========================================
+      - name: Install npm dependencies
+        run: |
+          npm ci
+
+
+      # ==========================================
+      # CAPACITOR CHECK
+      # ==========================================
+      - name: Check Capacitor
+        run: |
+          npx cap --version
+          npm list @capacitor/core
+          npm list @capacitor/ios
+
+
+      # ==========================================
+      # SYNC CAPACITOR
+      # ==========================================
+      - name: Sync Capacitor iOS
+        run: |
+          npx cap sync ios
+
+
+      # ==========================================
+      # CHECK IOS PROJECT
+      # ==========================================
+      - name: Check iOS project
+        run: |
+          echo "===== IOS DIRECTORY ====="
+          ls -la
+
+          echo "===== BUILD-IOS ====="
+          ls -la build-ios || true
+
+          echo "===== IOS PROJECT ====="
+          find build-ios -maxdepth 4 \
+            \( -name "*.xcodeproj" -o -name "Podfile" -o -name "Pods" \) \
+            -print || true
+
+
+      # ==========================================
+      # INSTALL COCOAPODS
+      # ==========================================
+      - name: Install CocoaPods
+        run: |
+          sudo gem install cocoapods
+          pod --version
+
+
+      # ==========================================
+      # POD INSTALL
+      # ==========================================
+      - name: Install iOS Pods
+        working-directory: build-ios/ios/App
+        run: |
+          pod deintegrate || true
+          pod install --repo-update
+
+
+      # ==========================================
+      # VERIFY CAPACITOR POD
+      # ==========================================
+      - name: Verify Capacitor
+        working-directory: build-ios/ios/App
+        run: |
+          echo "===== PODS ====="
+          ls -la Pods || true
+
+          echo "===== CAPACITOR ====="
+          find Pods -maxdepth 3 \
+            \( -iname "*Capacitor*" -o -iname "Capacitor.framework" \) \
+            -print || true
+
+          echo "===== PODFILE ====="
+          cat Podfile
+
+
+      # ==========================================
+      # CLEAN
+      # ==========================================
+      - name: Clean Xcode
+        working-directory: build-ios/ios/App
+        run: |
+          xcodebuild \
+            -workspace App.xcodeproj/project.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            clean
+
+
+      # ==========================================
+      # ARCHIVE
+      # ==========================================
+      - name: Archive Boom Music
+        working-directory: build-ios/ios/App
+        run: |
+          mkdir -p ../../output
+
+          xcodebuild \
+            -workspace App.xcodeproj/project.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$GITHUB_WORKSPACE/build-ios/output/BoomMusic.xcarchive" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.5 \
+            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOLS=NO \
+            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+
+      # ==========================================
+      # CREATE UNSIGNED IPA
+      # ==========================================
+      - name: Create unsigned IPA
         run: |
           set -e
-          test -d "BoomMusicNative/BoomMusicNative.xcodeproj"
-          xcodebuild -list             -project "BoomMusicNative/BoomMusicNative.xcodeproj"
 
-      - name: Build Unsigned App
-        shell: bash
-        run: |
-          set -o pipefail
+          APP_PATH="build-ios/output/BoomMusic.xcarchive/Products/Applications/App.app"
+          PAYLOAD="build-ios/output/Payload"
 
-          rm -rf build
-          mkdir -p build/DerivedData build/App
+          rm -rf "$PAYLOAD"
+          mkdir -p "$PAYLOAD"
 
-          xcodebuild             -project "BoomMusicNative/BoomMusicNative.xcodeproj"             -scheme "BoomMusicNative"             -configuration Release             -sdk iphoneos             -derivedDataPath "$PWD/build/DerivedData"             CONFIGURATION_BUILD_DIR="$PWD/build/App"             ALWAYS_SEARCH_USER_PATHS=NO             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build             2>&1 | tee build/xcodebuild.log
-
-      - name: Locate App
-        shell: bash
-        run: |
-          set -e
-
-          APP_PATH="$(find "$PWD/build" -type d -name "*.app" -print -quit)"
-
-          if [ -z "$APP_PATH" ]; then
-            echo "::error::Build selesai tetapi .app tidak ditemukan."
-            echo "=== Last 200 log lines ==="
-            tail -200 build/xcodebuild.log || true
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: App.app tidak ditemukan!"
             exit 1
           fi
 
-          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
-          echo "Found: $APP_PATH"
+          cp -R "$APP_PATH" "$PAYLOAD/App.app"
 
-      - name: Create Unsigned IPA
-        shell: bash
-        run: |
-          set -e
+          cd build-ios/output
 
-          rm -rf build/Payload
-          mkdir -p build/Payload
+          zip -qry BoomMusic-unsigned.ipa Payload
 
-          cp -R "$APP_PATH" build/Payload/
+          rm -rf Payload
 
-          cd build
-          zip -qry "BoomMusicNative-unsigned.ipa" Payload
+          echo "===== IPA CREATED ====="
+          ls -lh BoomMusic-unsigned.ipa
 
-          test -f "BoomMusicNative-unsigned.ipa"
-          ls -lh "BoomMusicNative-unsigned.ipa"
 
-      - name: Upload IPA
+      # ==========================================
+      # UPLOAD ARCHIVE
+      # ==========================================
+      - name: Upload Xcode Archive
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: BoomMusicNative-unsigned
-          path: build/BoomMusicNative-unsigned.ipa
-          if-no-files-found: error
+          name: BoomMusic-XCArchive
+          path: build-ios/output/BoomMusic.xcarchive
           retention-days: 7
 
-      - name: Upload Build Log
-        if: always()
+
+      # ==========================================
+      # UPLOAD IPA
+      # ==========================================
+      - name: Upload IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: BoomMusicNative-build-log
-          path: build/xcodebuild.log
-          if-no-files-found: ignore
+          name: BoomMusic-IPA
+          path: build-ios/output/BoomMusic-unsigned.ipa
           retention-days: 7
