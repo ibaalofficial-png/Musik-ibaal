@@ -1,311 +1,57 @@
-name: Boom Music - Build IPA
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: macos-14
-
-    steps:
-
-      # ==============================
-      # CHECKOUT
-      # ==============================
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      # ==============================
-      # NODE
-      # ==============================
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-
-      # ==============================
-      # CREATE PACKAGE
-      # ==============================
-
-      - name: Prepare npm project
+      - name: Prepare web directory and Capacitor
         shell: bash
         run: |
           set -e
 
-          echo "===== ROOT ====="
-          pwd
-          ls -la
-          echo "================"
+          echo "===== PREPARING WEB APP ====="
 
-          if [ ! -f package.json ]; then
+          mkdir -p www
 
-            echo "package.json tidak ditemukan."
-            echo "Membuat package.json..."
-
-            cat > package.json <<'EOF'
-          {
-            "name": "boom-music",
-            "version": "1.0.0",
-            "private": true,
-            "scripts": {
-              "build": "echo Boom Music build"
-            },
-            "dependencies": {
-              "@capacitor/core": "^7.4.0",
-              "@capacitor/ios": "^7.4.0"
-            },
-            "devDependencies": {
-              "@capacitor/cli": "^7.4.0"
-            }
-          }
-          EOF
-
+          # Copy project web files ke folder yang valid untuk Capacitor
+          if [ -f index.html ]; then
+            cp index.html www/
           fi
 
-          echo "===== PACKAGE ====="
-          cat package.json
-          echo "=================="
+          if [ -f style.css ]; then
+            cp style.css www/
+          fi
 
+          if [ -f app.js ]; then
+            cp app.js www/
+          fi
 
-      # ==============================
-      # NPM INSTALL
-      # ==============================
+          if [ -d assets ]; then
+            cp -R assets www/
+          fi
 
-      - name: Install npm dependencies
-        shell: bash
-        run: |
-          set -e
+          if [ -d js ]; then
+            cp -R js www/
+          fi
 
-          npm install --no-audit --no-fund
+          if [ -d data ]; then
+            cp -R data www/
+          fi
 
-          echo "npm install selesai."
+          if [ -f manifest.json ]; then
+            cp manifest.json www/
+          fi
 
-          ls -la
+          if [ -f service-worker.js ]; then
+            cp service-worker.js www/
+          fi
 
+          echo "===== WWW CONTENT ====="
+          find www -maxdepth 4 -type f | sort
+          echo "======================="
 
-      # ==============================
-      # CREATE CAPACITOR CONFIG
-      # ==============================
-
-      - name: Prepare Capacitor
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f capacitor.config.json ]; then
-
-            cat > capacitor.config.json <<'EOF'
+          cat > capacitor.config.json <<'EOF'
           {
             "appId": "com.ibaal.boommusic",
             "appName": "Boom Music",
-            "webDir": "."
+            "webDir": "www"
           }
           EOF
-
-          fi
 
           echo "===== CAPACITOR CONFIG ====="
           cat capacitor.config.json
           echo "============================"
-
-
-      # ==============================
-      # CHECK WEB FILES
-      # ==============================
-
-      - name: Check Boom Music files
-        shell: bash
-        run: |
-          echo "===== FILES ====="
-
-          find . \
-            -maxdepth 3 \
-            -type f \
-            ! -path "./.git/*" \
-            | sort
-
-          echo "================="
-
-
-      # ==============================
-      # ADD IOS
-      # ==============================
-
-      - name: Add iOS platform
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -d ios ]; then
-            npx cap add ios
-          else
-            echo "Folder ios sudah ada."
-          fi
-
-
-      # ==============================
-      # SYNC
-      # ==============================
-
-      - name: Capacitor sync
-        shell: bash
-        run: |
-          set -e
-
-          npx cap sync ios
-
-
-      # ==============================
-      # COCOAPODS
-      # ==============================
-
-      - name: Install CocoaPods
-        shell: bash
-        run: |
-          set -e
-
-          cd ios/App
-
-          pod install --repo-update
-
-          echo "Pods selesai."
-
-
-      # ==============================
-      # SHOW XCODE
-      # ==============================
-
-      - name: Inspect Xcode project
-        shell: bash
-        run: |
-          set -e
-
-          cd ios/App
-
-          echo "===== XCODE PROJECT ====="
-
-          xcodebuild \
-            -workspace App.xcworkspace \
-            -list
-
-          echo "========================"
-
-
-      # ==============================
-      # CLEAN
-      # ==============================
-
-      - name: Clean Xcode
-        shell: bash
-        run: |
-          set -e
-
-          cd ios/App
-
-          xcodebuild \
-            -workspace App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            clean
-
-
-      # ==============================
-      # ARCHIVE
-      # ==============================
-
-      - name: Archive iOS
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p output
-
-          cd ios/App
-
-          xcodebuild \
-            -workspace App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath "$GITHUB_WORKSPACE/output/BoomMusic.xcarchive" \
-            IPHONEOS_DEPLOYMENT_TARGET=15.5 \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            archive
-
-
-      # ==============================
-      # CREATE IPA
-      # ==============================
-
-      - name: Create unsigned IPA
-        shell: bash
-        run: |
-          set -e
-
-          ARCHIVE="$GITHUB_WORKSPACE/output/BoomMusic.xcarchive"
-
-          APP="$ARCHIVE/Products/Applications/App.app"
-
-          echo "Checking:"
-          echo "$APP"
-
-          if [ ! -d "$APP" ]; then
-            echo "ERROR: App.app tidak ditemukan."
-            find "$ARCHIVE" -maxdepth 5 -print
-            exit 1
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/output/Payload"
-
-          cp -R \
-            "$APP" \
-            "$GITHUB_WORKSPACE/output/Payload/BoomMusic.app"
-
-          cd "$GITHUB_WORKSPACE/output"
-
-          zip -r \
-            BoomMusic-unsigned.ipa \
-            Payload
-
-          echo ""
-          echo "================================"
-          echo "IPA BERHASIL DIBUAT"
-          echo "================================"
-
-          ls -lh BoomMusic-unsigned.ipa
-
-
-      # ==============================
-      # UPLOAD IPA
-      # ==============================
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: BoomMusic-IPA
-          path: output/BoomMusic-unsigned.ipa
-          if-no-files-found: error
-
-
-      # ==============================
-      # UPLOAD ARCHIVE
-      # ==============================
-
-      - name: Upload Xcode Archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: BoomMusic-XCArchive
-          path: output/BoomMusic.xcarchive
-          if-no-files-found: error
