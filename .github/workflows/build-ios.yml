@@ -1,4 +1,4 @@
-name: Boom Music iOS - One Click Build
+name: Boom Music - Build IPA
 
 on:
   workflow_dispatch:
@@ -10,215 +10,219 @@ permissions:
   contents: read
 
 jobs:
-  build-ios:
-    runs-on: macos-14
+  build:
+    runs-on: macos-15
 
     steps:
 
-      - name: Checkout
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ==========================================
+      # CHECK BOOM MUSIC PROJECT
+      # ==========================================
+      - name: Check Boom Music files
+        shell: bash
+        run: |
+          set -e
+
+          echo "===== ROOT PROJECT ====="
+          ls -la
+
+          if [ ! -f "index.html" ]; then
+            echo "ERROR: index.html tidak ditemukan."
+            echo ""
+            echo "Struktur yang benar:"
+            echo ""
+            echo "Musik-ibaal/"
+            echo "├── index.html"
+            echo "├── style.css"
+            echo "├── app.js"
+            echo "├── manifest.json"
+            echo "├── service-worker.js"
+            echo "├── js/"
+            echo "├── assets/"
+            echo "└── .github/"
+            echo ""
+            exit 1
+          fi
+
+          echo "OK: index.html ditemukan."
+
+      # ==========================================
+      # NODE
+      # ==========================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Prepare project
+      # ==========================================
+      # CREATE PACKAGE
+      # ==========================================
+      - name: Create package.json
         shell: bash
         run: |
-          set -euo pipefail
-
-          echo "=== ROOT ==="
-          pwd
-          find . -maxdepth 3 -type f ! -path './.git/*' | sort | head -300
-
-          mkdir -p www
-
-          if [ ! -f www/index.html ] && [ -f index.html ]; then
-            cp index.html www/
-          fi
-
-          for f in style.css app.js manifest.json service-worker.js favicon.ico; do
-            if [ -f "$f" ] && [ ! -f "www/$f" ]; then
-              cp "$f" "www/$f"
-            fi
-          done
-
-          for d in assets js data css fonts images icons; do
-            if [ -d "$d" ] && [ ! -d "www/$d" ]; then
-              cp -R "$d" "www/$d"
-            fi
-          done
-
-          if [ ! -f www/index.html ]; then
-            echo "ERROR: index.html tidak ditemukan."
-            echo "Masukkan project Boom Music ke root repository."
-            exit 1
-          fi
-
           if [ ! -f package.json ]; then
-            cat > package.json <<'EOF'
-          {
-            "name": "boom-music",
-            "version": "1.0.0",
-            "private": true,
-            "scripts": {
-              "build": "node -e \"console.log('Boom Music web build ready')\""
-            }
-          }
-          EOF
+            npm init -y
           fi
 
-          npm install --no-audit --no-fund
+          npm install @capacitor/core @capacitor/cli @capacitor/ios
 
-          npm install \
-            --save-exact \
-            --no-audit \
-            --no-fund \
-            @capacitor/core@7 \
-            @capacitor/ios@7
-
-          npm install \
-            --save-dev \
-            --save-exact \
-            --no-audit \
-            --no-fund \
-            @capacitor/cli@7
-
+      # ==========================================
+      # CAPACITOR CONFIG
+      # ==========================================
+      - name: Create Capacitor config
+        shell: bash
+        run: |
           cat > capacitor.config.json <<'EOF'
           {
             "appId": "com.ibaal.boommusic",
             "appName": "Boom Music",
             "webDir": "www",
-            "server": {
-              "androidScheme": "https"
-            }
+            "bundledWebRuntime": false
           }
           EOF
 
-          echo "=== WWW ==="
-          find www -maxdepth 4 -type f | sort
+      # ==========================================
+      # COPY WEB PROJECT
+      # ==========================================
+      - name: Prepare web files
+        shell: bash
+        run: |
+          rm -rf www
+          mkdir -p www
 
+          cp -R index.html www/
+
+          [ -f style.css ] && cp style.css www/ || true
+          [ -f app.js ] && cp app.js www/ || true
+          [ -f manifest.json ] && cp manifest.json www/ || true
+          [ -f service-worker.js ] && cp service-worker.js www/ || true
+
+          [ -d js ] && cp -R js www/ || true
+          [ -d assets ] && cp -R assets www/ || true
+          [ -d data ] && cp -R data www/ || true
+          [ -d images ] && cp -R images www/ || true
+          [ -d icons ] && cp -R icons www/ || true
+          [ -d fonts ] && cp -R fonts www/ || true
+
+          echo "===== WWW ====="
+          find www -maxdepth 3 -type f | sort
+
+      # ==========================================
+      # ADD IOS
+      # ==========================================
       - name: Create iOS project
         shell: bash
         run: |
-          set -euo pipefail
+          npx cap add ios
 
-          if [ ! -d ios ]; then
-            npx cap add ios
-          else
-            echo "Existing ios directory found."
-          fi
-
+      # ==========================================
+      # SYNC
+      # ==========================================
       - name: Sync Capacitor
         shell: bash
         run: |
-          set -euo pipefail
-
           npx cap sync ios
 
+      # ==========================================
+      # PATCH IOS SETTINGS
+      # ==========================================
+      - name: Configure iOS
+        shell: bash
+        run: |
+          PROJECT="ios/App/App.xcodeproj/project.pbxproj"
+
+          if [ -f "$PROJECT" ]; then
+
+            sed -i '' \
+              's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g' \
+              "$PROJECT"
+
+            sed -i '' \
+              's/ALWAYS_SEARCH_USER_PATHS = YES;/ALWAYS_SEARCH_USER_PATHS = NO;/g' \
+              "$PROJECT"
+
+          fi
+
+      # ==========================================
+      # PODS
+      # ==========================================
       - name: Install CocoaPods
         shell: bash
         run: |
-          set -euo pipefail
-
           cd ios/App
 
           pod install --repo-update
 
-      - name: Verify Capacitor
+      # ==========================================
+      # BUILD
+      # ==========================================
+      - name: Build unsigned archive
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
 
-          test -d ios/App/App.xcworkspace
-          test -f ios/App/Podfile.lock
-          test -d ios/App/Pods
-
-          echo "Capacitor + CocoaPods OK"
-
-      - name: Clean Xcode
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd ios/App
+          mkdir -p output
 
           xcodebuild \
-            -workspace App.xcworkspace \
+            -workspace ios/App/App.xcworkspace \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            clean
-
-      - name: Archive iOS
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$GITHUB_WORKSPACE/output"
-
-          cd ios/App
-
-          xcodebuild \
-            -workspace App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath "$GITHUB_WORKSPACE/output/BoomMusic.xcarchive" \
+            -archivePath "$PWD/output/BoomMusic.xcarchive" \
             IPHONEOS_DEPLOYMENT_TARGET=15.5 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             archive
 
+      # ==========================================
+      # CREATE UNSIGNED IPA
+      # ==========================================
       - name: Create unsigned IPA
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          ARCHIVE="$GITHUB_WORKSPACE/output/BoomMusic.xcarchive"
-          APP="$ARCHIVE/Products/Applications/App.app"
+          cd ios/App
 
-          if [ ! -d "$APP" ]; then
-            echo "ERROR: App.app tidak ditemukan."
-            find "$ARCHIVE" -maxdepth 6 -print
-            exit 1
-          fi
-
-          rm -rf "$GITHUB_WORKSPACE/output/Payload"
-
-          mkdir -p "$GITHUB_WORKSPACE/output/Payload"
+          rm -rf Payload
+          mkdir -p Payload
 
           cp -R \
-            "$APP" \
-            "$GITHUB_WORKSPACE/output/Payload/BoomMusic.app"
+            output/BoomMusic.xcarchive/Products/Applications/App.app \
+            Payload/BoomMusic.app
 
-          cd "$GITHUB_WORKSPACE/output"
-
-          /usr/bin/zip \
-            -qry \
-            BoomMusic-unsigned.ipa \
+          /usr/bin/zip -r \
+            "$GITHUB_WORKSPACE/BoomMusic-unsigned.ipa" \
             Payload
 
-          test -f BoomMusic-unsigned.ipa
+          rm -rf Payload
 
-          ls -lh BoomMusic-unsigned.ipa
+          echo "===== IPA CREATED ====="
+          ls -lh "$GITHUB_WORKSPACE/BoomMusic-unsigned.ipa"
 
+      # ==========================================
+      # UPLOAD IPA
+      # ==========================================
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: BoomMusic-IPA
-          path: output/BoomMusic-unsigned.ipa
+          path: BoomMusic-unsigned.ipa
           if-no-files-found: error
-          retention-days: 7
 
+      # ==========================================
+      # UPLOAD ARCHIVE
+      # ==========================================
       - name: Upload Xcode Archive
         uses: actions/upload-artifact@v4
         with:
           name: BoomMusic-XCArchive
-          path: output/BoomMusic.xcarchive
+          path: ios/App/output/BoomMusic.xcarchive
           if-no-files-found: error
-          retention-days: 7
