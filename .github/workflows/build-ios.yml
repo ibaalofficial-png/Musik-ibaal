@@ -1,1 +1,85 @@
+name: Build Boom Music iOS
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Unsigned IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Check Project
+        run: |
+          echo "=== Repository ==="
+          ls -la
+
+          echo "=== BoomMusicNative ==="
+          ls -la BoomMusicNative
+
+          echo "=== Xcode Project ==="
+          xcodebuild -list \
+            -project BoomMusicNative/BoomMusicNative.xcodeproj
+
+      - name: Build iOS App
+        run: |
+          mkdir -p build
+
+          xcodebuild \
+            -project BoomMusicNative/BoomMusicNative.xcodeproj \
+            -scheme BoomMusicNative \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CONFIGURATION_BUILD_DIR="$PWD/build/App" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Find App
+        run: |
+          echo "=== Built files ==="
+          find build -name "*.app" -type d -print
+
+      - name: Create Unsigned IPA
+        run: |
+          mkdir -p build/Payload
+
+          APP_PATH=$(find build/App -maxdepth 1 -name "*.app" -type d | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app tidak ditemukan!"
+            exit 1
+          fi
+
+          echo "App ditemukan:"
+          echo "$APP_PATH"
+
+          cp -R "$APP_PATH" build/Payload/
+
+          cd build
+          zip -r BoomMusicNative-unsigned.ipa Payload
+
+      - name: Verify IPA
+        run: |
+          ls -lh build/BoomMusicNative-unsigned.ipa
+          unzip -l build/BoomMusicNative-unsigned.ipa | head -50
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoomMusicNative-unsigned
+          path: build/BoomMusicNative-unsigned.ipa
+          if-no-files-found: error
