@@ -1,85 +1,91 @@
 name: Build Boom Music iOS
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    name: Build Unsigned IPA
+  build-ios:
+    name: Build Boom Music iOS
     runs-on: macos-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode.app
+          echo "Xcode:"
           xcodebuild -version
+          xcode-select -p
 
-      - name: Check Project
+      - name: Inspect Project
         run: |
-          echo "=== Repository ==="
-          ls -la
+          set -e
+          test -d "BoomMusicNative/BoomMusicNative.xcodeproj"
+          xcodebuild -list             -project "BoomMusicNative/BoomMusicNative.xcodeproj"
 
-          echo "=== BoomMusicNative ==="
-          ls -la BoomMusicNative
-
-          echo "=== Xcode Project ==="
-          xcodebuild -list \
-            -project BoomMusicNative/BoomMusicNative.xcodeproj
-
-      - name: Build iOS App
+      - name: Build Unsigned App
+        shell: bash
         run: |
-          mkdir -p build
+          set -o pipefail
 
-          xcodebuild \
-            -project BoomMusicNative/BoomMusicNative.xcodeproj \
-            -scheme BoomMusicNative \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build/DerivedData \
-            CONFIGURATION_BUILD_DIR="$PWD/build/App" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            clean build
+          rm -rf build
+          mkdir -p build/DerivedData build/App
 
-      - name: Find App
+          xcodebuild             -project "BoomMusicNative/BoomMusicNative.xcodeproj"             -scheme "BoomMusicNative"             -configuration Release             -sdk iphoneos             -derivedDataPath "$PWD/build/DerivedData"             CONFIGURATION_BUILD_DIR="$PWD/build/App"             ALWAYS_SEARCH_USER_PATHS=NO             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build             2>&1 | tee build/xcodebuild.log
+
+      - name: Locate App
+        shell: bash
         run: |
-          echo "=== Built files ==="
-          find build -name "*.app" -type d -print
+          set -e
 
-      - name: Create Unsigned IPA
-        run: |
-          mkdir -p build/Payload
-
-          APP_PATH=$(find build/App -maxdepth 1 -name "*.app" -type d | head -n 1)
+          APP_PATH="$(find "$PWD/build" -type d -name "*.app" -print -quit)"
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app tidak ditemukan!"
+            echo "::error::Build selesai tetapi .app tidak ditemukan."
+            echo "=== Last 200 log lines ==="
+            tail -200 build/xcodebuild.log || true
             exit 1
           fi
 
-          echo "App ditemukan:"
-          echo "$APP_PATH"
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "Found: $APP_PATH"
+
+      - name: Create Unsigned IPA
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf build/Payload
+          mkdir -p build/Payload
 
           cp -R "$APP_PATH" build/Payload/
 
           cd build
-          zip -r BoomMusicNative-unsigned.ipa Payload
+          zip -qry "BoomMusicNative-unsigned.ipa" Payload
 
-      - name: Verify IPA
-        run: |
-          ls -lh build/BoomMusicNative-unsigned.ipa
-          unzip -l build/BoomMusicNative-unsigned.ipa | head -50
+          test -f "BoomMusicNative-unsigned.ipa"
+          ls -lh "BoomMusicNative-unsigned.ipa"
 
-      - name: Upload IPA Artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: BoomMusicNative-unsigned
           path: build/BoomMusicNative-unsigned.ipa
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoomMusicNative-build-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
