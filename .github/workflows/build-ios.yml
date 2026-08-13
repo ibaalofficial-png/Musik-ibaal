@@ -1,1 +1,121 @@
-npm install
+name: Build Boom Music iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Prepare web files
+        run: |
+          set -e
+
+          mkdir -p www
+
+          if [ -f index.html ]; then
+            cp index.html www/
+          else
+            echo "ERROR: index.html tidak ditemukan"
+            exit 1
+          fi
+
+          [ ! -f style.css ] || cp style.css www/
+          [ ! -f app.js ] || cp app.js www/
+          [ ! -f manifest.json ] || cp manifest.json www/
+          [ ! -f service-worker.js ] || cp service-worker.js www/
+
+          [ ! -d js ] || cp -R js www/
+          [ ! -d assets ] || cp -R assets www/
+
+          echo "=== WWW ==="
+          find www -maxdepth 3 -type f
+
+      - name: Create package.json
+        run: |
+          cat > package.json <<'EOF'
+          {
+            "name": "boom-music",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/core": "^7.4.3",
+              "@capacitor/ios": "^7.4.3"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^7.4.3"
+            }
+          }
+          EOF
+
+      - name: Create Capacitor config
+        run: |
+          cat > capacitor.config.ts <<'EOF'
+          import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.boommusic.player',
+            appName: 'Boom Music',
+            webDir: 'www',
+            bundledWebRuntime: false
+          };
+
+          export default config;
+          EOF
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Add iOS
+        run: npx cap add ios
+
+      - name: Sync iOS
+        run: npx cap sync ios
+
+      - name: Verify iOS project
+        run: |
+          set -e
+
+          echo "=== PROJECT ==="
+          ls -la
+
+          echo "=== IOS ==="
+          ls -la ios
+
+          if [ ! -d ios ]; then
+            echo "ERROR: ios folder tidak dibuat"
+            exit 1
+          fi
+
+      - name: Build iOS
+        run: |
+          cd ios/App
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -sdk iphoneos \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package app
+        run: |
+          mkdir -p output
+          cp -R ios/App/build/Build/Products/Debug-iphoneos/App.app output/BoomMusic.app
+
+      - name: Upload Boom Music
+        uses: actions/upload-artifact@v4
+        with:
+          name: Boom-Music-iOS
+          path: output/BoomMusic.app
