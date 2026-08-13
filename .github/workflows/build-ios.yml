@@ -1,13 +1,10 @@
-name: Boom Music Native Auto Build
+name: Boom Music Build
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -17,20 +14,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect project
-        shell: bash
+      - name: Check project
         run: |
-          set -e
-
-          echo "=== ROOT ==="
+          echo "Checking BoomMusicNative..."
           ls -la
-
-          if [ -d "BoomMusicNative" ]; then
-            echo "BoomMusicNative ditemukan."
-          else
-            echo "ERROR: Folder BoomMusicNative tidak ditemukan."
-            exit 1
-          fi
+          ls -la BoomMusicNative
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -38,260 +26,23 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        shell: bash
+        working-directory: BoomMusicNative
         run: |
-          set -e
-
-          cd BoomMusicNative
-
           if [ -f package-lock.json ]; then
-            echo "package-lock.json ditemukan."
-            npm ci
-          elif [ -f npm-shrinkwrap.json ]; then
-            echo "npm-shrinkwrap.json ditemukan."
             npm ci
           elif [ -f package.json ]; then
-            echo "package-lock tidak ada."
-            echo "Menggunakan npm install."
             npm install
           else
-            echo "Tidak ada package.json."
-            echo "Skip npm install."
+            echo "No package.json - skipping npm"
           fi
 
-      - name: Check Capacitor configuration
-        shell: bash
+      - name: Check iOS
+        working-directory: BoomMusicNative
         run: |
-          set -e
-
-          cd BoomMusicNative
-
-          if [ -f capacitor.config.json ]; then
-            echo "capacitor.config.json ditemukan."
-            cat capacitor.config.json
-          elif [ -f capacitor.config.ts ]; then
-            echo "capacitor.config.ts ditemukan."
-            cat capacitor.config.ts
-          else
-            echo "Tidak ada konfigurasi Capacitor."
-          fi
-
-      - name: Fix webDir
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
-          if [ -f capacitor.config.json ]; then
-            node <<'NODE'
-const fs = require("fs");
-
-const file = "capacitor.config.json";
-const config = JSON.parse(fs.readFileSync(file, "utf8"));
-
-if (!config.webDir || config.webDir === ".") {
-  if (fs.existsSync("www/index.html")) {
-    config.webDir = "www";
-  } else if (fs.existsSync("public/index.html")) {
-    config.webDir = "public";
-  } else if (fs.existsSync("index.html")) {
-    config.webDir = ".";
-  } else {
-    console.log("index.html tidak ditemukan di BoomMusicNative.");
-  }
-
-  fs.writeFileSync(
-    file,
-    JSON.stringify(config, null, 2) + "\n"
-  );
-
-  console.log("webDir diperiksa.");
-}
-NODE
-          fi
-
-      - name: Capacitor sync
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
-          if [ -f package.json ]; then
-            if [ -d ios ]; then
-              echo "iOS project ditemukan."
-
-              if npm exec --yes cap --version >/dev/null 2>&1; then
-                npm exec --yes cap sync ios
-              elif npx cap --version >/dev/null 2>&1; then
-                npx cap sync ios
-              else
-                echo "Capacitor CLI tidak tersedia."
-              fi
-            else
-              echo "Folder ios belum ada."
-            fi
-          fi
-
-      - name: Check iOS project
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
           if [ -d ios ]; then
-            echo "=== iOS PROJECT ==="
-            find ios -maxdepth 2 -type f | head -100
+            echo "iOS folder found"
+            find ios -maxdepth 2 -type f | head -50
           else
-            echo "ERROR: Folder ios tidak ditemukan."
+            echo "ERROR: ios folder not found"
             exit 1
           fi
-
-      - name: Find workspace
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
-          WORKSPACE=$(find ios -name "*.xcworkspace" -type d | head -1 || true)
-          PROJECT=$(find ios -name "*.xcodeproj" -type d | head -1 || true)
-
-          if [ -n "$WORKSPACE" ]; then
-            echo "WORKSPACE=$WORKSPACE" >> "$GITHUB_ENV"
-            echo "FOUND_TYPE=workspace" >> "$GITHUB_ENV"
-            echo "Workspace: $WORKSPACE"
-          elif [ -n "$PROJECT" ]; then
-            echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
-            echo "FOUND_TYPE=project" >> "$GITHUB_ENV"
-            echo "Project: $PROJECT"
-          else
-            echo "ERROR: Xcode project tidak ditemukan."
-            exit 1
-          fi
-
-      - name: Show schemes
-        shell: bash
-        run: |
-          cd BoomMusicNative
-
-          if [ "$FOUND_TYPE" = "workspace" ]; then
-            xcodebuild \
-              -workspace "$WORKSPACE" \
-              -list
-          else
-            xcodebuild \
-              -project "$PROJECT" \
-              -list
-          fi
-
-      - name: Build iOS
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
-          if [ "$FOUND_TYPE" = "workspace" ]; then
-
-            SCHEME=$(xcodebuild \
-              -workspace "$WORKSPACE" \
-              -list 2>/dev/null |
-              awk '/Schemes:/,/^$/' |
-              sed '1d' |
-              sed '/^[[:space:]]*$/d' |
-              head -1 |
-              xargs)
-
-            echo "Scheme: $SCHEME"
-
-            if [ -z "$SCHEME" ]; then
-              echo "ERROR: Scheme tidak ditemukan."
-              exit 1
-            fi
-
-            xcodebuild \
-              -workspace "$WORKSPACE" \
-              -scheme "$SCHEME" \
-              -configuration Release \
-              -sdk iphoneos \
-              -derivedDataPath build \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              build
-
-          else
-
-            SCHEME=$(xcodebuild \
-              -project "$PROJECT" \
-              -list 2>/dev/null |
-              awk '/Schemes:/,/^$/' |
-              sed '1d' |
-              sed '/^[[:space:]]*$/d' |
-              head -1 |
-              xargs)
-
-            echo "Scheme: $SCHEME"
-
-            if [ -z "$SCHEME" ]; then
-              echo "ERROR: Scheme tidak ditemukan."
-              exit 1
-            fi
-
-            xcodebuild \
-              -project "$PROJECT" \
-              -scheme "$SCHEME" \
-              -configuration Release \
-              -sdk iphoneos \
-              -derivedDataPath build \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              build
-
-          fi
-
-      - name: Locate app
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
-          APP=$(find build -name "*.app" -type d | head -1 || true)
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: .app tidak ditemukan."
-            exit 1
-          fi
-
-          echo "APP=$APP" >> "$GITHUB_ENV"
-          echo "App ditemukan: $APP"
-
-      - name: Package unsigned IPA
-        shell: bash
-        run: |
-          set -e
-
-          cd BoomMusicNative
-
-          mkdir -p Payload
-
-          cp -R "$APP" Payload/
-
-          rm -f BoomMusic.ipa
-
-          zip -qry BoomMusic.ipa Payload
-
-          rm -rf Payload
-
-          echo "IPA berhasil dibuat:"
-          ls -lh BoomMusic.ipa
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: Boom-Music-iOS
-          path: BoomMusicNative/BoomMusic.ipa
-          if-no-files-found: error
