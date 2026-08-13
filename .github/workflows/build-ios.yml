@@ -15,21 +15,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Prepare web files
         run: |
           set -e
 
+          rm -rf www
           mkdir -p www
 
-          if [ -f index.html ]; then
-            cp index.html www/
-          else
-            echo "ERROR: index.html tidak ditemukan"
+          if [ ! -f index.html ]; then
+            echo "ERROR: index.html tidak ditemukan di root repository"
+            echo "Isi repository:"
+            ls -la
             exit 1
           fi
 
+          cp index.html www/
           [ ! -f style.css ] || cp style.css www/
           [ ! -f app.js ] || cp app.js www/
           [ ! -f manifest.json ] || cp manifest.json www/
@@ -82,24 +83,24 @@ jobs:
       - name: Sync iOS
         run: npx cap sync ios
 
-      - name: Verify iOS project
+      - name: Verify
         run: |
-          set -e
-
-          echo "=== PROJECT ==="
+          echo "=== ROOT ==="
           ls -la
+
+          echo "=== WWW ==="
+          ls -la www
 
           echo "=== IOS ==="
           ls -la ios
 
-          if [ ! -d ios ]; then
-            echo "ERROR: ios folder tidak dibuat"
-            exit 1
-          fi
+          test -f www/index.html
+          test -d ios
 
       - name: Build iOS
         run: |
           cd ios/App
+
           xcodebuild \
             -workspace App.xcworkspace \
             -scheme App \
@@ -112,9 +113,12 @@ jobs:
       - name: Package app
         run: |
           mkdir -p output
-          cp -R ios/App/build/Build/Products/Debug-iphoneos/App.app output/BoomMusic.app
 
-      - name: Upload Boom Music
+          cp -R \
+            ios/App/build/Build/Products/Debug-iphoneos/App.app \
+            output/BoomMusic.app
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Boom-Music-iOS
