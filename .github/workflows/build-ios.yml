@@ -1,4 +1,4 @@
-name: Boom Music Build
+name: Boom Music Build IPA
 
 on:
   push:
@@ -14,35 +14,121 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check project
-        run: |
-          echo "Checking BoomMusicNative..."
-          ls -la
-          ls -la BoomMusicNative
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Prepare Boom Music
         working-directory: BoomMusicNative
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          elif [ -f package.json ]; then
-            npm install
-          else
-            echo "No package.json - skipping npm"
-          fi
+          set -e
 
-      - name: Check iOS
-        working-directory: BoomMusicNative
-        run: |
-          if [ -d ios ]; then
-            echo "iOS folder found"
-            find ios -maxdepth 2 -type f | head -50
-          else
-            echo "ERROR: ios folder not found"
+          echo "=== BOOM MUSIC ==="
+          ls -la
+
+          if [ ! -f index.html ]; then
+            echo "ERROR: index.html tidak ditemukan"
             exit 1
           fi
+
+          if [ ! -f package.json ]; then
+            echo "Membuat package.json..."
+            npm init -y
+          fi
+
+          npm install @capacitor/core @capacitor/cli @capacitor/ios
+
+      - name: Create Capacitor config
+        working-directory: BoomMusicNative
+        run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.ibaal.boommusic",
+            "appName": "Boom Music",
+            "webDir": ".",
+            "server": {
+              "androidScheme": "https"
+            }
+          }
+          EOF
+
+          cat capacitor.config.json
+
+      - name: Create iOS project
+        working-directory: BoomMusicNative
+        run: |
+          set -e
+
+          if [ ! -d ios ]; then
+            npx cap add ios
+          fi
+
+          npx cap sync ios
+
+      - name: Find Xcode project
+        working-directory: BoomMusicNative
+        run: |
+          set -e
+
+          echo "=== XCODE FILES ==="
+          find ios -maxdepth 3 \
+            \( -name "*.xcworkspace" -o -name "*.xcodeproj" \) \
+            -print
+
+      - name: Build iOS
+        working-directory: BoomMusicNative
+        run: |
+          set -e
+
+          WORKSPACE=$(find ios -name "*.xcworkspace" -type d | head -1)
+
+          if [ -z "$WORKSPACE" ]; then
+            echo "ERROR: Xcode workspace tidak ditemukan"
+            exit 1
+          fi
+
+          echo "Workspace:"
+          echo "$WORKSPACE"
+
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Create IPA
+        working-directory: BoomMusicNative
+        run: |
+          set -e
+
+          APP=$(find build -name "*.app" -type d | head -1)
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: App tidak ditemukan"
+            exit 1
+          fi
+
+          echo "APP:"
+          echo "$APP"
+
+          rm -rf Payload
+          mkdir Payload
+
+          cp -R "$APP" Payload/
+
+          zip -qry BoomMusic.ipa Payload
+
+          rm -rf Payload
+
+          ls -lh BoomMusic.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoomMusic-IPA
+          path: BoomMusicNative/BoomMusic.ipa
