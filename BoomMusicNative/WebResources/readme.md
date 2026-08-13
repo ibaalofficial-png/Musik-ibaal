@@ -1,3 +1,0 @@
-# IBAALEQ
-
-Project scaffold.
